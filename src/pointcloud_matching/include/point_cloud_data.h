@@ -17,5 +17,8 @@ public:
     PointCloudData();
     void receive_point_cloud(const sensor_msgs::PointCloud2ConstPtr& cloud_msg);
     int x;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr test;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr current_pc;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr previous_pc;
 
 };
