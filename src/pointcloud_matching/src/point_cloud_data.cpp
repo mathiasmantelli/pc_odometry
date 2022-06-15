@@ -1,39 +1,71 @@
 #include "../include/point_cloud_data.h"
 
 PointCloudData::PointCloudData(){
-    x = 2;
-    test = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PointXYZ my_point; 
-    my_point.x = 10;
-    my_point.z = 10;
-    my_point.y = 10;
-    test->push_back(my_point);
+    total_icp_iterations_ = 5;
+    previous_pc = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+    // pcl::PointXYZ my_point; 
+    // my_point.x = 10;
+    // my_point.z = 10;
+    // my_point.y = 10;
+    // test->push_back(my_point);
+
+    is_first_pc_reading_ = true;
+
+    icp_.setMaximumIterations (total_icp_iterations_);
+
+    odometry_estimation_ = Eigen::Matrix4d::Identity();
+}
+
+void PointCloudData::print4x4Matrix (const Eigen::Matrix4d & matrix){
+    ROS_INFO("Rotation matrix :");
+    ROS_INFO("    | %f %f %f | ", matrix(0, 0),matrix (0, 1), matrix (0, 2));
+    ROS_INFO("R = | %f %f %f | ", matrix (1, 0), matrix (1, 1), matrix (1, 2));
+    ROS_INFO("    | %f %f %f | ", matrix (2, 0), matrix (2, 1), matrix (2, 2));
+    ROS_INFO("Translation vector :");
+    ROS_INFO("t = < %f, %f, %f >", matrix (0, 3), matrix (1, 3), matrix (2, 3));
+
+    Eigen::Matrix3f rotation; 
+    rotation(0,0) = matrix(0,0); rotation(1,0) = matrix(1,0); rotation(2,0) = matrix(2,0);
+    rotation(0,1) = matrix(0,1); rotation(1,1) = matrix(1,1); rotation(2,1) = matrix(2,1);
+    rotation(0,2) = matrix(0,2); rotation(1,2) = matrix(1,2); rotation(2,2) = matrix(2,2);
+    Eigen::Vector3f euler_angles = rotation.eulerAngles(2, 1, 0);
+    ROS_INFO("R: %f, P: %f, Y: %f", euler_angles[0], euler_angles[1], euler_angles[2]);
+    // float roll, pitch, yaw; 
+    // roll = M_PI / atan2(matrix(2,1), matrix(2,2));
+    // pitch = M_PI / atan2( -matrix(2,0), std::pow(matrix(2,1) * matrix(2,1) + matrix(2,2) * matrix(2,2),0.5));
+    // yaw = M_PI / atan2( matrix(1,0),matrix(0,0));
+    // ROS_INFO("R: %f, P: %f, Y: %f", roll, pitch, yaw);
+    // std::cout<<"roll is Pi/" <<M_PI/atan2( matrix(2,1),matrix(2,2) ) <<std::endl;
+    // std::cout<<"pitch: Pi/" <<M_PI/atan2( -matrix(2,0), std::pow( matrix(2,1)*matrix(2,1) +matrix(2,2)*matrix(2,2) ,0.5  )  ) <<std::endl;
+    // std::cout<<"yaw is Pi/" <<M_PI/atan2( matrix(1,0),matrix(0,0) ) <<std::endl;
 }
 
 void PointCloudData::receive_point_cloud(const sensor_msgs::PointCloud2ConstPtr& cloud_msg){
-    //ROS_INFO("Sequence: [%d]", cloud_msg->header.seq);
-    // ROS_INFO("Size: [%d]", cloud_msg->data.size());
-    
+
     pcl::PCLPointCloud2 pcl_version_pc; 
     pcl_conversions::toPCL(*cloud_msg, pcl_version_pc);
     pcl::PointCloud<pcl::PointXYZ>::Ptr current_pc(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr previous_pc(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromPCLPointCloud2(pcl_version_pc, *current_pc);
-    // test = current_pc;
-
-    ROS_INFO("Size: [%d] - [%d]", cloud_msg->data.size(), test->size());
-    int cont = 0;
-    for(sensor_msgs::PointCloud2ConstIterator<float> it(*cloud_msg, "x"); it != it.end(); ++it){
-        if(cont == 50){
-            ROS_INFO("Point2 0: [%f, %f, %f]", it[0], it[1], it[2]);    
-        }
-        if(cont <= 50)cont++;
-    }
-    int index = 50;
-    ROS_INFO("PointP 0: [%f, %f, %f]", current_pc->points[index].x, current_pc->points[index].y, current_pc->points[index].z);
 
     // Defining a rotation matrix and translation vector
     Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity ();
+
+    if(!is_first_pc_reading_){
+        icp_.setInputSource(current_pc);
+        icp_.setInputTarget(previous_pc);
+        icp_.align(*current_pc);
+        if(icp_.hasConverged()){
+            transformation_matrix = icp_.getFinalTransformation().cast<double>();
+            print4x4Matrix(transformation_matrix);
+            odometry_estimation_ = odometry_estimation_ * transformation_matrix;
+            print4x4Matrix(odometry_estimation_);
+        }else{
+            ROS_INFO("ICP has not converged\n");
+        }
+    }else{
+        is_first_pc_reading_ = false;    
+    }
+    *previous_pc = *current_pc;
 
     // A rotation matrix (see https://en.wikipedia.org/wiki/Rotation_matrix)
     // double theta = M_PI / 8;  // The angle of rotation in radians
