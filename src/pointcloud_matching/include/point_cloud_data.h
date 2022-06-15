@@ -29,7 +29,9 @@ public:
 private:
     int total_icp_iterations_;
     bool is_first_pc_reading_, new_pc_reading_;
-
+    float delta_distance_, delta_angle_;
+    Eigen::Vector3f euler_angles_;
+    nav_msgs::Odometry new_odom_, to_be_published_odom_;
     ros::NodeHandle* my_node_;
     ros::Publisher publish_odom_;
     ros::Subscriber pose_subscriber_;
