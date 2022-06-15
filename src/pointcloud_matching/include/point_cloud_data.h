@@ -24,8 +24,7 @@ public:
     void computeOdometry();
     
     void run();
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr current_pc;
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr previous_pc;
+
 private:
     int total_icp_iterations_;
     bool is_first_pc_reading_, new_pc_reading_;

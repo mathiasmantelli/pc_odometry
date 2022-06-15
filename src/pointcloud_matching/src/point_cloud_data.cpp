@@ -4,7 +4,7 @@ PointCloudData::PointCloudData(int argc, char **argv){
 
     ros::init(argc, argv, "point_cloud_odometry");    
     my_node_ = new ros::NodeHandle("~");
-    loop_rate_ = new ros::Rate(10);
+    loop_rate_ = new ros::Rate(5);
 
     publish_odom_ = my_node_->advertise<nav_msgs::Odometry>("odom_mathias", 100);
     pose_subscriber_ = my_node_->subscribe("/velodyne_points",10, &PointCloudData::receivePointCloud, this);
@@ -12,11 +12,6 @@ PointCloudData::PointCloudData(int argc, char **argv){
     total_icp_iterations_ = 15;
     previous_pc_ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
     current_pc_ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-    // pcl::PointXYZ my_point; 
-    // my_point.x = 10;
-    // my_point.z = 10;
-    // my_point.y = 10;
-    // test->push_back(my_point);
 
     is_first_pc_reading_ = true;
     new_pc_reading_ = false;
@@ -45,13 +40,12 @@ PointCloudData::PointCloudData(int argc, char **argv){
     to_be_published_odom_.twist.twist.angular.z = 0;
 
     delta_distance_ = 0; 
+    delta_angle_ = 0;
 }
 
 void PointCloudData::run(){
-    
-
     while(ros::ok()){
-        print4x4Matrix(odometry_estimation_);
+        // print4x4Matrix(odometry_estimation_);
         computeOdometry();
         publishOdom();
         ros::spinOnce();
@@ -66,65 +60,29 @@ void PointCloudData::receivePointCloud(const sensor_msgs::PointCloud2ConstPtr& c
     pcl_conversions::toPCL(*cloud_msg, pcl_version_pc);
     pcl::fromPCLPointCloud2(pcl_version_pc, *current_pc_);
     new_pc_reading_ = true;
-    
-    // A rotation matrix (see https://en.wikipedia.org/wiki/Rotation_matrix)
-    // double theta = M_PI / 8;  // The angle of rotation in radians
-    // transformation_matrix (0, 0) = std::cos (theta);
-    // transformation_matrix (0, 1) = -sin (theta);
-    // transformation_matrix (1, 0) = sin (theta);
-    // transformation_matrix (1, 1) = std::cos (theta);
-
-    // A translation on Z axis (0.4 meters)
-    // transformation_matrix (2, 3) = 0.4;
-
-    
-    // The point clouds we will be using
-    // PointCloud<PointXYZ>::Ptr cloud_in (new PointCloud<PointXYZ>);  // Original point cloud
-    // PointCloud<PointXYZ>::Ptr cloud_tr (new PointCloud<PointXYZ>T);  // Transformed point cloud
-    // PointCloud<PointXYZ>::Ptr cloud_icp (new PointCloud<PointXYZ>);  // ICP output point cloud 
-    
-
-    // Executing the transformation
-    // pcl::transformPointCloud (*cloud_in, *cloud_icp, transformation_matrix);
-    // *cloud_tr = *cloud_icp;  // We backup cloud_icp into cloud_tr for later use
-
-    // pcl::IterativeClosestPoint<PointT, PointT> icp;
-    // icp.setMaximumIterations (iterations);
-    // icp.setInputSource (cloud_icp);
-    // icp.setInputTarget (cloud_in);
-    // icp.align (*cloud_icp);
-    // icp.setMaximumIterations (1);  // We set this variable to 1 for the next time we will call .align () function
-
-    // if (icp.hasConverged ())
-    // {
-    //     std::cout << "\nICP has converged, score is " << icp.getFitnessScore () << std::endl;
-    //     std::cout << "\nICP transformation " << iterations << " : cloud_icp -> cloud_in" << std::endl;
-    //     transformation_matrix = icp.getFinalTransformation ().cast<double>();
-    //     print4x4Matrix (transformation_matrix);
-    // }
-    // else
-    // {
-    //     PCL_ERROR ("\nICP has not converged.\n");
-    //     return (-1);
-    // }
 }
 
 void PointCloudData::computeOdometry(){
     if(new_pc_reading_){
         // Defining a rotation matrix and translation vector    
         Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity ();
-
+        
+        //Checking whether there is a previous point cloud to compute the odometry
         if(!is_first_pc_reading_){
+
+            //Defining the point clouds to be matched
             icp_.setInputSource(current_pc_);
             icp_.setInputTarget(previous_pc_);
             icp_.align(*current_pc_);
             if(icp_.hasConverged()){
+                //Getting the transformation between previous point cloud and the current one
                 transformation_matrix = icp_.getFinalTransformation().cast<double>();
-                // print4x4Matrix(transformation_matrix);
+                
+                //Computing the distance between the previous pose to the current one
                 delta_distance_ = sqrt(pow(transformation_matrix(0,3) - odometry_estimation_(0,3), 2) + 
                                   pow(transformation_matrix(1,3) - odometry_estimation_(1,3), 2) + 
                                   pow(transformation_matrix(2,3) - odometry_estimation_(2,3), 2));
-                // ROS_INFO("--DIST: %f\n", dist);
+                
                 
                 Eigen::Matrix3f rotation; 
                 rotation(0,0) = odometry_estimation_(0,0); rotation(1,0) = odometry_estimation_(1,0); rotation(2,0) = odometry_estimation_(2,0);
@@ -139,17 +97,21 @@ void PointCloudData::computeOdometry(){
                 rotation(0,2) = transformation_matrix(0,2); rotation(1,2) = transformation_matrix(1,2); rotation(2,2) = transformation_matrix(2,2);
                 euler_angles_ = rotation.eulerAngles(0, 1, 2);
 
+                //Computing the angle between the previous pose to the current one
                 delta_angle_ = current_yaw_angle - euler_angles_[2];
                 delta_angle_ += (delta_angle_ > 180) ? -360 : (delta_angle_ < -180) ? 360 : 0;
 
+                //Estimating the odom given based on the current transformation between the point clouds
                 odometry_estimation_ = odometry_estimation_ * transformation_matrix;
 
                 rotation(0,0) = odometry_estimation_(0,0); rotation(1,0) = odometry_estimation_(1,0); rotation(2,0) = odometry_estimation_(2,0);
                 rotation(0,1) = odometry_estimation_(0,1); rotation(1,1) = odometry_estimation_(1,1); rotation(2,1) = odometry_estimation_(2,1);
                 rotation(0,2) = odometry_estimation_(0,2); rotation(1,2) = odometry_estimation_(1,2); rotation(2,2) = odometry_estimation_(2,2);
                 euler_angles_ = rotation.eulerAngles(0, 1, 2);
-                current_yaw_angle = euler_angles_[2];
+                current_yaw_angle = euler_angles_[2] + 3.14;
+                current_yaw_angle += (current_yaw_angle > 180) ? -360 : (current_yaw_angle < -180) ? 360 : 0;
 
+                //Creating the odom message based on the computations
                 tf2::Quaternion q;
                 q.setRPY(0, 0, current_yaw_angle);
                 new_odom_.header.stamp = ros::Time::now();
@@ -182,6 +144,7 @@ void PointCloudData::computeOdometry(){
 
 void PointCloudData::publishOdom(){
  
+    //Filling up the odom message to be published
     to_be_published_odom_.header.stamp = ros::Time::now();
     to_be_published_odom_.header.frame_id = "odom";
     to_be_published_odom_.child_frame_id = "base_link";
@@ -199,21 +162,7 @@ void PointCloudData::publishOdom(){
     to_be_published_odom_.twist.twist.angular.y = 0;
     to_be_published_odom_.twist.twist.angular.z = delta_angle_ /(to_be_published_odom_.header.stamp.toSec() - new_odom_.header.stamp.toSec());
 
-    
-
     new_odom_.header.stamp = to_be_published_odom_.header.stamp;
- 
-    // for(int i = 0; i<36; i++) {
-    // if(i == 0 || i == 7 || i == 14) {
-    //     quatOdom.pose.covariance[i] = .01;
-    //     }
-    //     else if (i == 21 || i == 28 || i== 35) {
-    //     quatOdom.pose.covariance[i] += 0.1;
-    //     }
-    //     else {
-    //     quatOdom.pose.covariance[i] = 0;
-    //     }
-    // }
 
     publish_odom_.publish(new_odom_);
 }
